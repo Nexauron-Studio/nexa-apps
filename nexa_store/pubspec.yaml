@@ -1,0 +1,63 @@
+name: nexa_store
+description: A professional app store platform.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # UI & Material 3
+  cupertino_icons: ^1.0.6
+  google_fonts: ^6.1.0
+  
+  # State Management
+  flutter_riverpod: ^2.4.9
+  riverpod_annotation: ^2.3.3
+  
+  # Routing
+  go_router: ^13.0.1
+  
+  # Networking
+  dio: ^5.4.1
+  retrofit: ^4.0.1
+  
+  # Backend (Supabase)
+  supabase_flutter: ^2.8.0
+  
+  # Utilities
+  flutter_dotenv: ^5.1.0
+  json_annotation: ^4.8.1
+  shared_preferences: ^2.2.2
+  equatable: ^2.0.5
+  intl: ^0.18.1
+
+    # لإدارة ملفات التخزين على الهاتف
+  path_provider: ^2.1.1
+  # لحساب SHA-256
+  crypto: ^3.0.3
+  # لفتح نافذة تثبيت الـ APK (بعد التحميل)
+  android_intent_plus: ^5.0.3
+  share_plus: ^10.0.2
+  # لإدارة أذونات التخزين (للمستخدمين على Android 10+)
+  permission_handler: ^11.0.1
+  file_picker: ^8.0.0
+  package_info_plus: ^8.0.0
+  
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  build_runner: ^2.4.8
+  json_serializable: ^6.7.1
+  riverpod_generator: ^2.3.9
+  # تم حذف isar_generator لأننا لن نستخدمه الآن
+
+flutter:
+  uses-material-design: true
+  assets:
+    - .env
