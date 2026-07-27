@@ -1,0 +1,49 @@
+name: NEXA Patch Generator
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Download Archive Patcher
+        run: |
+          wget https://github.com/Decad/archive-patcher/releases/download/v1.0/archive-patcher-generator.jar -O archive-patcher-generator.jar
+
+      - name: Download Old and New APKs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # استخراج المعرف (Tag) الخاص بالإصدار الأقدم مباشرة
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^)
+          
+          # تحميل APK الخاص بالإصدار القديم
+          gh release download $PREV_TAG -p "*.apk" -O old.apk
+          
+          # تحميل APK الخاص بالإصدار الجديد الذي تم نشره للتو
+          gh release download ${{ github.event.release.tag_name }} -p "*.apk" -O new.apk
+
+      - name: Generate Patch
+        run: |
+          # تشغيل أداة المقارنة وتوليد ملف الفروقات
+          java -jar archive-patcher-generator.jar --old old.apk --new new.apk --patch update.patch
+
+      - name: Upload Patch to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: update.patch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
