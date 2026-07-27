@@ -11,29 +11,78 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract Release Info
-        id: release_info
+      # 1. تثبيت أداة bsdiff المسؤولة عن استخراج الفروقات بين الملفات
+      - name: Install bsdiff
+        run: sudo apt-get update && sudo apt-get install -y bsdiff
+
+      # 2. تحميل الإصدار الجديد واستخراج بياناته
+      - name: Extract Current Release Info
+        id: current_release
         run: |
           echo "url=${{ github.event.release.assets[0].browser_download_url }}" >> $GITHUB_OUTPUT
           echo "version=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
           echo "package_name=${{ github.event.release.name }}" >> $GITHUB_OUTPUT
-
-      - name: Calculate SHA-256
-        id: sha
-        run: |
-          wget -q ${{ steps.release_info.outputs.url }} -O app.apk
-          SHA256=$(sha256sum app.apk | cut -d ' ' -f 1)
+          # تحميل الـ APK الجديد وتسميته new_app.apk
+          wget -q ${{ github.event.release.assets[0].browser_download_url }} -O new_app.apk
+          SHA256=$(sha256sum new_app.apk | cut -d ' ' -f 1)
           echo "sha256=$SHA256" >> $GITHUB_OUTPUT
 
+      # 3. البحث عن الإصدار السابق وتحميله (إن وجد)
+      - name: Fetch Previous Release APK
+        id: prev_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # جلب اسم الإصدار الذي يسبق الإصدار الحالي
+          PREV_TAG=$(gh release list --limit 2 | awk 'NR==2 {print $1}')
+          
+          if [ -z "$PREV_TAG" ]; then
+            echo "لا يوجد إصدار سابق. سيتم تخطي إنشاء ملف الفروقات."
+            echo "has_patch=false" >> $GITHUB_OUTPUT
+          else
+            echo "الإصدار السابق هو: $PREV_TAG"
+            # تحميل ملف الـ APK من الإصدار السابق وتسميته old_app.apk
+            gh release download $PREV_TAG -p "*.apk" -O old_app.apk || true
+            
+            if [ -f "old_app.apk" ]; then
+              echo "has_patch=true" >> $GITHUB_OUTPUT
+            else
+              echo "has_patch=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      # 4. مقارنة الملفين وإنتاج ملف update.patch ورفعه
+      - name: Generate and Upload Patch
+        id: generate_patch
+        if: steps.prev_release.outputs.has_patch == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # تشغيل خوارزمية bsdiff
+          bsdiff old_app.apk new_app.apk update.patch
+          PATCH_SHA256=$(sha256sum update.patch | cut -d ' ' -f 1)
+          echo "patch_sha256=$PATCH_SHA256" >> $GITHUB_OUTPUT
+          
+          # رفع ملف update.patch إلى إصدار GitHub الحالي
+          gh release upload ${{ github.event.release.tag_name }} update.patch
+          
+          # بناء رابط التحميل المباشر لملف الـ Patch
+          PATCH_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/update.patch"
+          echo "patch_url=$PATCH_URL" >> $GITHUB_OUTPUT
+
+      # 5. إرسال جميع البيانات إلى Supabase Edge Function
       - name: Send to Supabase Edge Function
         run: |
           curl -X POST "${{ secrets.SUPABASE_EDGE_FUNCTION_URL }}" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
             -d '{
-              "package_name": "${{ steps.release_info.outputs.package_name }}",
-              "version": "${{ steps.release_info.outputs.version }}",
-              "download_url": "${{ steps.release_info.outputs.url }}",
-              "sha256": "${{ steps.sha.outputs.sha256 }}",
-              "app_name": "${{ github.event.release.name }}"
+              "package_name": "${{ steps.current_release.outputs.package_name }}",
+              "version": "${{ steps.current_release.outputs.version }}",
+              "download_url": "${{ steps.current_release.outputs.url }}",
+              "sha256": "${{ steps.current_release.outputs.sha256 }}",
+              "app_name": "${{ github.event.release.name }}",
+              "has_patch": ${{ steps.prev_release.outputs.has_patch || false }},
+              "patch_url": "${{ steps.generate_patch.outputs.patch_url || '' }}",
+              "patch_sha256": "${{ steps.generate_patch.outputs.patch_sha256 || '' }}"
             }'
