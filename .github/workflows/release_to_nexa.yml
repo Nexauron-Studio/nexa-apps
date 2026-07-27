@@ -1,0 +1,39 @@
+name: Deploy to NEXA Store
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Release Info
+        id: release_info
+        run: |
+          echo "url=${{ github.event.release.assets[0].browser_download_url }}" >> $GITHUB_OUTPUT
+          echo "version=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          echo "package_name=${{ github.event.release.name }}" >> $GITHUB_OUTPUT
+
+      - name: Calculate SHA-256
+        id: sha
+        run: |
+          wget -q ${{ steps.release_info.outputs.url }} -O app.apk
+          SHA256=$(sha256sum app.apk | cut -d ' ' -f 1)
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+
+      - name: Send to Supabase Edge Function
+        run: |
+          curl -X POST "${{ secrets.SUPABASE_EDGE_FUNCTION_URL }}" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -d '{
+              "package_name": "${{ steps.release_info.outputs.package_name }}",
+              "version": "${{ steps.release_info.outputs.version }}",
+              "download_url": "${{ steps.release_info.outputs.url }}",
+              "sha256": "${{ steps.sha.outputs.sha256 }}",
+              "app_name": "${{ github.event.release.name }}"
+            }'
