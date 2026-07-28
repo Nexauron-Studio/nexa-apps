@@ -19,6 +19,10 @@ class AppModel {
   final String? downloadUrl;
   @JsonKey(name: 'sha256')
   final String? sha256Checksum;
+  @JsonKey(name: 'patch_url')
+  final String? patchUrl;
+  @JsonKey(name: 'patch_sha256')
+  final String? patchSha256;
   final String? category;
   final List<String>? screenshots;
   @JsonKey(name: 'downloads_count')
@@ -35,6 +39,8 @@ class AppModel {
     this.size,
     this.downloadUrl,
     this.sha256Checksum,
+    this.patchUrl,
+    this.patchSha256,
     this.category,
     this.screenshots,
     this.downloadsCount,

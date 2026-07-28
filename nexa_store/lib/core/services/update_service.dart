@@ -1,126 +1,70 @@
-import 'package:flutter/material.dart';
-import 'package:package_info_plus/package_info_plus.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:nexa_store/core/services/download_service.dart';
+import 'dart:io';
+import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 
+/// Android native bridge for Archive Patcher (must match [MainActivity.kt]).
 class UpdateService {
-  final SupabaseClient _supabase = Supabase.instance.client;
+  static const MethodChannel _channel =
+      MethodChannel('com.example.nexa_store/install');
 
-  Future<void> checkForUpdates(BuildContext context) async {
-    try {
-      final PackageInfo packageInfo = await PackageInfo.fromPlatform();
-      final String currentVersion = packageInfo.version;
-      final String packageName = packageInfo.packageName;
+  /// Downloads a patch, merges it with the installed APK for [packageName], then installs.
+  static Future<void> fetchAndApplyPatch({
+    required String patchUrl,
+    required String packageName,
+    String expectedNewApkSha256 = '',
+  }) async {
+    final directory = await getTemporaryDirectory();
+    final patchPath = '${directory.path}/update_${packageName.hashCode}.patch';
+    final newApkPath = '${directory.path}/new_${packageName.hashCode}.apk';
 
-      final response = await _supabase
-          .from('apps')
-          .select('version, download_url, sha256')
-          .eq('package_name', packageName)
-          .maybeSingle();
+    final response = await http.get(Uri.parse(patchUrl));
+    if (response.statusCode != 200) {
+      throw Exception('فشل تنزيل ملف التحديث: ${response.statusCode}');
+    }
+    await File(patchPath).writeAsBytes(response.bodyBytes);
 
-      if (response == null) return;
+    final String? oldApkPath = await _channel.invokeMethod<String>(
+      'getInstalledApkPath',
+      {'packageName': packageName},
+    );
+    if (oldApkPath == null || oldApkPath.isEmpty) {
+      throw Exception('التطبيق غير مثبت — استخدم تنزيل APK كامل');
+    }
 
-      final String latestVersion = response['version'] ?? '0.0.0';
+    final String? resultPath = await _channel.invokeMethod<String>('applyPatch', {
+      'oldApkPath': oldApkPath,
+      'patchPath': patchPath,
+      'newApkPath': newApkPath,
+    });
 
-      if (_isUpdateAvailable(currentVersion, latestVersion)) {
-        final String downloadUrl = response['download_url'];
-        final String sha256 = response['sha256'] ?? '';
+    if (resultPath == null || !File(resultPath).existsSync()) {
+      throw Exception('فشل دمج ملف التحديث');
+    }
 
-        if (context.mounted) {
-          _showUpdateDialog(
-              context, downloadUrl, sha256, latestVersion, packageInfo.appName);
-        }
+    if (expectedNewApkSha256.trim().isNotEmpty) {
+      final bytes = await File(resultPath).readAsBytes();
+      final digest = sha256.convert(bytes).toString();
+      if (digest != expectedNewApkSha256.trim()) {
+        throw Exception('فشل التحقق من سلامة APK بعد الدمج');
       }
-    } catch (e) {
-      debugPrint('Update check failed: $e');
     }
+
+    await _channel.invokeMethod('installApk', {'path': resultPath});
   }
 
-  bool _isUpdateAvailable(String current, String latest) {
-    final currParts =
-        current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    final latestParts =
-        latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-
-    for (int i = 0; i < latestParts.length; i++) {
-      int c = i < currParts.length ? currParts[i] : 0;
-      if (latestParts[i] > c) return true;
-      if (latestParts[i] < c) return false;
-    }
-    return false;
-  }
-
-  void _showUpdateDialog(BuildContext context, String downloadUrl,
-      String expectedSha256, String versionName, String appName) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        bool isDownloading = false;
-        double downloadProgress = 0.0;
-
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: const Text('تحديث جديد متوفر'),
-              content: isDownloading
-                  ? Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircularProgressIndicator(
-                          value: downloadProgress > 0 ? downloadProgress : null,
-                        ),
-                        const SizedBox(height: 16),
-                        Text('${(downloadProgress * 100).toStringAsFixed(1)}%'),
-                      ],
-                    )
-                  : Text(
-                      'الإصدار $versionName متاح الآن. يرجى التحديث للمتابعة.'),
-              actions: [
-                if (!isDownloading)
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blueAccent,
-                      foregroundColor: Colors.white,
-                      elevation: 2,
-                    ),
-                    onPressed: () async {
-                      setState(() {
-                        isDownloading = true;
-                      });
-
-                      try {
-                        await DownloadService().downloadAndInstall(
-                          url: downloadUrl,
-                          expectedSha256: expectedSha256,
-                          appName: appName,
-                          onProgress: (progress) {
-                            setState(() {
-                              downloadProgress = progress;
-                            });
-                          },
-                        );
-                      } catch (e) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('فشل التحديث: $e')),
-                          );
-                          setState(() {
-                            isDownloading = false;
-                          });
-                        }
-                      }
-                    },
-                    child: const Text(
-                      'تحديث الآن',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-              ],
-            );
-          },
-        );
-      },
+  /// Backward-compatible entry (store self-update when [packageName] is omitted).
+  static Future<void> fetchAndApplyUpdate(
+    String patchUrl, {
+    String? packageName,
+    String expectedNewApkSha256 = '',
+  }) {
+    return fetchAndApplyPatch(
+      patchUrl: patchUrl,
+      packageName: packageName ?? 'com.example.nexa_store',
+      expectedNewApkSha256: expectedNewApkSha256,
     );
   }
 }

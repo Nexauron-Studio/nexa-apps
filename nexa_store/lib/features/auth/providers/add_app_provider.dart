@@ -1,8 +1,8 @@
 import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:crypto/crypto.dart';
-import 'dart:convert';
 
 class AddAppState {
   final bool isLoading;
@@ -36,6 +36,20 @@ class AddAppNotifier extends StateNotifier<AddAppState> {
   AddAppNotifier() : super(AddAppState());
 
   final SupabaseClient _client = Supabase.instance.client;
+  static const MethodChannel _installChannel =
+      MethodChannel('com.example.nexa_store/install');
+
+  Future<String?> _readApkPackageName(File apkFile) async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _installChannel.invokeMethod<String>(
+        'getApkPackageName',
+        {'path': apkFile.path},
+      );
+    } catch (_) {
+      return null;
+    }
+  }
 
   Future<void> uploadApp({
     required String name,
@@ -49,14 +63,20 @@ class AddAppNotifier extends StateNotifier<AddAppState> {
         isLoading: true, uploadProgress: 0.0, error: null, isSuccess: false);
 
     try {
-      // 1. رفع الأيقونة
+      final packageName = await _readApkPackageName(apkFile);
+      if (packageName == null || packageName.isEmpty) {
+        throw Exception(
+            'تعذر قراءة package name من APK. ارفع من جهاز أندroid أو تحقق من الملف.');
+      }
+
       final iconExt = iconFile.path.split('.').last;
       final iconPath =
           'icons/${DateTime.now().millisecondsSinceEpoch}.$iconExt';
       await _client.storage.from('app_assets').upload(iconPath, iconFile);
       final iconUrl = _client.storage.from('app_assets').getPublicUrl(iconPath);
 
-      // 2. رفع ملف APK (SDK يتعامل مع الملفات الكبيرة تلقائياً)
+      state = state.copyWith(uploadProgress: 0.35);
+
       final apkExt = apkFile.path.split('.').last;
       final apkPath = 'apks/${DateTime.now().millisecondsSinceEpoch}.$apkExt';
       await _client.storage.from('app_assets').upload(
@@ -68,14 +88,12 @@ class AddAppNotifier extends StateNotifier<AddAppState> {
           );
       final apkUrl = _client.storage.from('app_assets').getPublicUrl(apkPath);
 
-      // 3. حساب SHA-256 للملف APK
-      final bytes = await apkFile.readAsBytes();
-      final digest = sha256.convert(bytes);
-      final sha256Checksum = digest.toString();
+      state = state.copyWith(uploadProgress: 0.85);
 
-      // 4. إدراج التطبيق في جدول apps
-      // استبدل الجزء الخاص بإدراج التطبيق في جدول apps بهذا الكود:
-      await _client.from('apps').insert({
+      final bytes = await apkFile.readAsBytes();
+      final sha256Checksum = sha256.convert(bytes).toString();
+
+      final row = {
         'name': name,
         'version': version,
         'description': description,
@@ -83,18 +101,32 @@ class AddAppNotifier extends StateNotifier<AddAppState> {
         'icon_url': iconUrl,
         'download_url': apkUrl,
         'sha256': sha256Checksum,
-        'package_name': 'com.nexa.${name.toLowerCase().replaceAll(' ', '_')}',
+        'package_name': packageName,
         'size': apkFile.lengthSync(),
-      });
+        'patch_url': null,
+        'patch_sha256': null,
+      };
 
-      state = state.copyWith(isLoading: false, isSuccess: true);
+      final existing = await _client
+          .from('apps')
+          .select('id')
+          .eq('package_name', packageName)
+          .maybeSingle();
+
+      if (existing != null) {
+        await _client.from('apps').update(row).eq('id', existing['id']);
+      } else {
+        await _client.from('apps').insert(row);
+      }
+
+      state = state.copyWith(isLoading: false, isSuccess: true, uploadProgress: 1);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
     }
   }
 
   void reset() {
-    state = AddAppState(); // <-- تم إزالة const هنا
+    state = AddAppState();
   }
 }
 

@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:nexa_store/core/models/app_model.dart';
-import 'package:nexa_store/core/services/app_service.dart';
-import 'package:nexa_store/core/services/update_service.dart'; // إضافة الاستدعاء
+import 'package:nexa_store/core/services/app_service.dart'; // مسار ملف الفحص
 import 'package:nexa_store/features/auth/providers/auth_provider.dart';
+import 'package:nexa_store/core/services/update_checker.dart';
 
 final appsProvider = FutureProvider<List<AppModel>>((ref) async {
   return await AppService().fetchApps();
@@ -22,7 +22,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      UpdateService().checkForUpdates(context);
+      UpdateChecker().checkForUpdates(context); // استخدام الفئة المصححة
     });
   }
 
@@ -32,8 +32,8 @@ class _HomePageState extends ConsumerState<HomePage> {
     final authState = ref.watch(authProvider);
     final isAdmin = authState.user?.role == 'admin';
 
-    print('User Role: ${authState.user?.role}');
-    print('Is Admin: $isAdmin');
+    debugPrint('User Role: ${authState.user?.role}');
+    debugPrint('Is Admin: $isAdmin');
 
     return Scaffold(
       appBar: AppBar(
@@ -149,7 +149,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                       if (app.rating != null)
                         Row(
                           children: [
-                            Icon(Icons.star, size: 14, color: Colors.amber),
+                            const Icon(Icons.star,
+                                size: 14, color: Colors.amber),
                             const SizedBox(width: 2),
                             Text(
                               app.rating!.toStringAsFixed(1),

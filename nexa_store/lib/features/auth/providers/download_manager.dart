@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:nexa_store/core/models/app_model.dart';
-import 'package:nexa_store/core/services/download_service.dart';
+import 'package:nexa_store/core/services/app_update_helper.dart';
 
 // حالة التنزيل
 enum DownloadStatus { idle, downloading, completed, failed }
@@ -35,23 +35,16 @@ class DownloadTask {
 class DownloadManager extends StateNotifier<Map<String, DownloadTask>> {
   DownloadManager() : super({});
 
-  final DownloadService _service = DownloadService();
-
   void startDownload(AppModel app) {
-    if (app.appId == null ||
-        app.downloadUrl == null ||
-        app.sha256Checksum == null) {
+    if (app.appId == null || app.downloadUrl == null) {
       throw Exception('Missing download info for app ${app.name}');
     }
 
     final task = DownloadTask(appId: app.appId!, appName: app.name);
     state = {...state, app.appId!: task};
 
-    _service
-        .downloadAndInstall(
-      url: app.downloadUrl!,
-      expectedSha256: app.sha256Checksum!,
-      appName: app.name,
+    AppUpdateHelper.installOrUpdate(
+      app,
       onProgress: (progress) {
         final updatedTask = state[app.appId]!.copyWith(progress: progress);
         state = {...state, app.appId!: updatedTask};

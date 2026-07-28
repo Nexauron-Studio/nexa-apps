@@ -3,7 +3,6 @@ package com.example.nexa_store
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.os.Bundle
 import android.provider.Settings
 import android.content.pm.PackageManager
 import androidx.core.content.FileProvider
@@ -11,6 +10,7 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import com.google.archivepatcher.applier.FileByFileApplier
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.nexa_store/install"
@@ -24,15 +24,65 @@ class MainActivity : FlutterActivity() {
                         val path = call.argument<String>("path") ?: ""
                         checkPermissionAndInstall(path, result)
                     }
-                    // إضافة دالة الاستعلام عن التطبيقات المثبتة
                     "getAppVersion" -> {
-                        val packageName = call.argument<String>("packageName") ?: ""
+                        val targetPackage = call.argument<String>("packageName") ?: ""
                         try {
-                            val pInfo = context.packageManager.getPackageInfo(packageName, 0)
+                            val pInfo = packageManager.getPackageInfo(targetPackage, 0)
                             result.success(pInfo.versionName)
                         } catch (e: PackageManager.NameNotFoundException) {
-                            result.success(null) // التطبيق غير مثبت
+                            result.success(null)
                         }
+                    }
+                    "getInstalledApkPath" -> {
+                        try {
+                            val targetPackage =
+                                call.argument<String>("packageName") ?: packageName
+                            val appInfo = packageManager.getApplicationInfo(targetPackage, 0)
+                            result.success(appInfo.sourceDir)
+                        } catch (e: Exception) {
+                            result.error("PATH_ERROR", e.message, null)
+                        }
+                    }
+                    "getApkPackageName" -> {
+                        val apkPath = call.argument<String>("path") ?: ""
+                        if (apkPath.isEmpty()) {
+                            result.error("INVALID_ARGS", "Missing apk path", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            val info = packageManager.getPackageArchiveInfo(apkPath, 0)
+                            result.success(info?.packageName)
+                        } catch (e: Exception) {
+                            result.error("APK_INFO_ERROR", e.message, null)
+                        }
+                    }
+                    "applyPatch" -> {
+                        val oldApkPath = call.argument<String>("oldApkPath") ?: ""
+                        val patchPath = call.argument<String>("patchPath") ?: ""
+                        val newApkPath = call.argument<String>("newApkPath") ?: ""
+
+                        if (oldApkPath.isEmpty() || patchPath.isEmpty() || newApkPath.isEmpty()) {
+                            result.error("INVALID_ARGS", "Missing file paths", null)
+                            return@setMethodCallHandler
+                        }
+
+                        Thread {
+                            try {
+                                val oldFile = File(oldApkPath)
+                                val patchFile = File(patchPath)
+                                val newFile = File(newApkPath)
+
+                                patchFile.inputStream().use { patchStream ->
+                                    newFile.outputStream().use { newStream ->
+                                        val applier = FileByFileApplier()
+                                        applier.applyPatch(oldFile, patchStream, newStream)
+                                    }
+                                }
+                                runOnUiThread { result.success(newApkPath) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("PATCH_FAILED", e.message, null) }
+                            }
+                        }.start()
                     }
                     else -> result.notImplemented()
                 }
